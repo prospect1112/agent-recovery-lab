@@ -1,43 +1,51 @@
 # Coding Agent Recovery Lab
 
-**v0.1 · Scripted replay on a real bug.** Compare continue, restart, and rollback with matched action budgets and an independent verifier. No model or API key required.
+**A paired recovery benchmark prototype, not a bug-fixing product.** Compare whether a stalled coding assistant should keep its context or restart, with or without rolling back its local changes. Runs without an API key in mock mode.
 
-从同一条停滞轨迹分支，分别改变会话上下文和工作区起点，再用独立验证器评估候选补丁。当前版本是一个真实 Bug 上的脚本化端到端案例，不是模型效果实验。
-
-## 一条命令复现
+## 复现
 
 ```sh
-python replay.py
+python replay.py --prepare-only
+python replay.py --offline --routes continue restart rollback rollback-full
 ```
 
-在仓库根目录运行；若系统的命令名是 `python3`，请改用 `python3 replay.py`。需要 Git 和 Python 3.12+，无需第三方 Python 包。首次运行须能访问 GitHub，之后可复用 `.runs/upstream.git` 中的 Git 对象。每次运行创建独立的 `.runs/trial-*`；`--out` 可指定输出目录。只运行受信任的固定上游代码和内置脚本，不接受任意外部候选补丁。成功退出表示对照、分支起点和预期结果均通过验收，而不是所有候选补丁都有效。
+需要 Python 3.12+ 和 Git。第一次准备下载固定提交；使用同一份 `--cache`（默认 `.runs/cache`）可离线复现。缺对象时 `--offline` 直接报错，不访问上游。默认 mock、无模型费用。可用 `--case` 选择一个或多个案例、`--budget` 调动作上限、`--timeout` 调单次测试限时、`--checkpoint` 按前缀编辑序号选回退点、`--repeat` 重复。用相同参数和 `--session .runs/pilot` 重跑会跳过已完整写入的案例轮次；中断的轮次从头重来，付费请求可能重复。不要并发写入同一 session。GitHub CI 也使用这个准备/离线两阶段流程。
 
-## 案例与协议
+| 案例 | 缺陷类型 |
+|---|---|
+| [boltons #563](https://github.com/mahmoud/boltons/pull/563) | 一次性迭代器与列表键的长度处理 |
+| [attrs #843](https://github.com/python-attrs/attrs/pull/843) | 父类的解析缓存使子类跳过类型标注解析 |
 
-- 案例：[boltons #563](https://github.com/mahmoud/boltons/pull/563)。`bucketize` 的 `key` 是列表时，对无长度的一次性迭代器调用 `len(src)` 会报错。基线固定在 `37ba6b2a3adde5795dee9195b255a4cb1d342a7b`。参考对照只从 `6270b5e35ed902859df6188970eec5bee5ab73d1` 提取该修复代码块，不纳入同一提交的其他修复。
-- 停滞点：脚本先编辑并存下检查点，再加入一次无效修改，连续两次运行真实的 `repro.py` 得到相同错误。相同前缀支出为四次动作。每条分支有两个剩余动作（编辑或测试），每次测试限时 10 秒。恢复计时不含建工作区、上游下载和独立验证。
-- 三条路线：`continue` = 卡住的工作区与完整操作史；`restart` = 同一工作区与固定摘要；`rollback` = 先前检查点与同一固定摘要。候选补丁始终相对于原始基线生成，而非相对于各自起始状态。
-- 独立验证：在干净工作区用 Git 重放补丁，再做一次可见测试和六个留出测试方法（四个应由失败变为通过，两个原本通过且不得回归）。留出脚本不复制给执行器，参考补丁不进入其输入。这是输入隔离，不是 OS 沙箱；未来运行真实 Agent 时须只挂载执行工作区，并让验证器单独运行。
-- 证据：`prefix.json` 记录命令、测试输出和检查点哈希；各分支保存 `context.json` 和 `candidate.patch`；`report.json` 记录修订、预算、停止原因、用时、成本与验证输出。两个检查点补丁可基于同一版本复原；当前仅一个文件可改，所以文件哈希与固定基线足以标识状态。
+各案例放在 `cases/<id>/`，包含固定的上游与参考提交、目标函数、前缀编辑、可见和留出测试。基线必须通过全部不应退化的测试，并在应修复的测试上失败；参考修复必须全部通过。框架不对任何候选路线规定“应通过”或“应失败”。留出测试文件随仓库发布，因此它们不是保密数据集；这是运行时输入隔离，不是防记忆或防刷分设计。
 
-## 第一轮结果
+## 对照设计
 
-| 路线或对照 | 可见测试 | 留出测试 | 恢复动作 | API 成本 |
-|---|---|---:|---:|---:|
-| 原始版本 | 失败 | 2/6 | — | — |
-| 上游参考修复 | 通过 | 6/6 | — | — |
-| 继续 | 失败 | 2/6 | 2/2 | $0 |
-| 摘要重开、保留工作区 | 通过 | 4/6 | 2/2 | $0 |
-| 摘要重开、回退检查点 | 通过 | 6/6 | 2/2 | $0 |
+| 路线 | 起始工作区 | 送给执行器的上下文 |
+|---|---|---|
+| `continue` | 停滞状态 | 摘要 + 可见操作记录 |
+| `restart` | 停滞状态 | 同一摘要 |
+| `rollback` | 较早的检查点 | 同一摘要 |
+| `rollback-full` | 较早的检查点 | 摘要 + 同一可见操作记录 |
 
-重开路线的无效补丁跳过无长度迭代器的长度检查，让 `zip` 静默截断；它通过了可见测试，但未通过留出的长度不符和读取边界测试。脚本特意安排这些结果来覆盖成功、重复失败和假阳性路径，不能由此推断路线优劣。用时可在 `report.json` 中查看，不应用来比较真实模型效率。
+停滞前缀目前是脚本构造的，并用两次真实测试确认同一错误。它不等于真实 Agent 自然卡住，`continue` 也不是恢复真实会话句柄。修改和运行可见测试各计一个动作。评测器在干净基线重放候选补丁。路线顺序按案例与轮次轮转；恢复耗时不包含数据准备和独立验证。
 
-## 相关工作与下一轮
+## 可选：真实模型执行器
 
-- [Fail-Fast, Restart-Smart](https://arxiv.org/abs/2608.03222) 已研究 SWE 轨迹的失败预测、无旧会话重开，以及按需复用中断补丁。不能把「检测停滞就重开」作为新贡献。[AgentRewind](https://arxiv.org/abs/2608.14380) 已对齐会话与环境检查点并对照重开策略；[RippleCP](https://arxiv.org/abs/2610.09088) 已在配平条件下测量检查点的反事实价值，主要问的是「存哪个检查点」。
-- 本项目优先验证较窄的差异：从同一真实停滞事件出发，固定摘要后退一步是否优于保留当前补丁？候选信号是检查点之后首次出现的**可见**回归（此前通过的测试现在失败），而不是留出测试结果。当前合成前缀不覆盖该信号；要专门采样既有回归也有无回归的前缀。若预算允许，增加「完整上下文 + 回退」作为第四格，检查上下文与工作区的交互。
-- 下一轮先接 [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 的真实执行循环，使用 [SWE-bench](https://github.com/SWE-bench/SWE-bench) 的评测环境和补丁验证，不重建通用评测器。真实试点先做一个配对小样本校准成本，再做 8–12 个案例。同一前缀各路线固定模型、工具、动作与生成 token 上限，单独记录上下文输入、缓存用量、停止原因和实际费用；以停滞事件为配对单位，预先固定信号与失败/超时计数规则，同时报告每成功补丁成本。公开 Bug 可能被模型见过，不把 boltons 案例当作泛化证据；选择策略后按仓库划分留出集，再与固定基线比较。
+```sh
+docker pull python:3.12-slim
+python replay.py --case attrs-843 --executor deepseek --docker-image python:3.12-slim --timeout 30 --budget 2 --output-tokens 1024
+```
 
-## 许可
+这会使用环境中的 `DEEPSEEK_API_KEY` 发起付费请求。模型经 [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion) 决定替换单个函数、跑可见测试或提交；没有终端、文件浏览或网络工具。API 只接收任务、候选函数及可见信息，不接收参考补丁或留出测试。候选代码一律在固定镜像 ID 的独立、无网络、非 root、只读容器中运行，有内存、CPU、进程数和测试限时；留出测试目录只挂载到独立的最终验证容器，不挂载到可见执行环境。最终验证时测试和候选代码同进程，**不能当作恶意参赛代码的防作弊边界**。无 Docker 则不允许运行模型路线。适用范围仅限可信的内置普通 Python 维护案例，不是任意项目的通用 Agent。
 
-本项目代码使用 [BSD Zero Clause License (0BSD)](LICENSE)。运行时从上游拉取的 boltons 源码及其参考修复仍适用 [boltons 自身的许可证](https://github.com/mahmoud/boltons/blob/6270b5e35ed902859df6188970eec5bee5ab73d1/LICENSE)，不随本仓库分发。
+每条路线硬限动作数和 API 生成 token 数，输入 token 单独记录；输入长度并不配平，因为它是研究变量之一。通过 `--prices CACHE_HIT CACHE_MISS OUTPUT` 可按 USD/百万 token 估算费用，未填或统计不全时显示未知，不假填零。模拟不发 API 请求。本项目没有用该适配器跑付费实验的结果，API 协议测试使用替身。
+
+## 结果怎么读
+
+`summary.json` 给出通过数/总试次、超时、错误、动作和耗时均值、成本，以及**假修复率**（在可见通过且得到评测判决的试次中，留出失败的比例）。两两比较另记“仅第一条通过 / 仅第二条通过 / 都通过 / 都未通过”，避免汇总成功率掩盖彼此抵消的结果。超时/错误仍留在成功率的总试次分母中。每次报告另含补丁、起点哈希、预算、用量和测试记录。不要直接公开原始运行日志。
+
+两个案例、每例两次的 mock 验收：继续 0/4、重开 2/4、回退 2/4、全上下文回退 0/4。重开路线可见测试通过 4/4，其中 2/4 被留出测试否决；回退通过 boltons 但未通过 attrs。**这些都是事先写入 fixture 的行为，只证明框架能区分结果，不是策略效果数据，没有统计显著性的含义。**
+
+下一步：采集自然停滞前缀，预先登记配对指标，用 8–12 个普通维护案例跑成本试点；按仓库设留出集，再估计策略差异。最值得验证的信号是检查点之后新出现的可见回归，能否预测“回退比保留工作区更好”。相关工作：[Fail-Fast, Restart-Smart](https://arxiv.org/abs/2608.03222)、[AgentRewind](https://arxiv.org/abs/2608.14380)、[RippleCP](https://arxiv.org/abs/2610.09088)。
+
+项目代码采用 [0BSD](LICENSE)。不随仓库打包上游源码或补丁；运行时下载的代码仍按其 [boltons](https://github.com/mahmoud/boltons/blob/6270b5e35ed902859df6188970eec5bee5ab73d1/LICENSE) 或 [attrs](https://github.com/python-attrs/attrs/blob/f31bb2850a520993396ebdae598056fb3e3af6f8/LICENSE) 上游许可。

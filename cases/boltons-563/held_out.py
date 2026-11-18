@@ -1,9 +1,10 @@
-import json
 import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+sys.path.insert(0, str(Path(__file__).parent))
+from heldout import run_groups
+sys.path.insert(0, sys.argv[1])
 from boltons.iterutils import bucketize
 
 
@@ -48,12 +49,4 @@ class PassToPass(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    groups = {}
-    for group in (FailToPass, PassToPass):
-        result = unittest.TextTestRunner(verbosity=2).run(
-            unittest.defaultTestLoader.loadTestsFromTestCase(group)
-        )
-        failed = {test.id().split(" (")[0] for test, _ in result.failures + result.errors}
-        groups[group.__name__] = {"total": result.testsRun, "failed": len(failed)}
-    print(json.dumps(groups))
-    sys.exit(any(group["failed"] for group in groups.values()))
+    run_groups(FailToPass, PassToPass)

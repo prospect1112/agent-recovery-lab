@@ -1,0 +1,17 @@
+{
+  "upstream": "https://github.com/mahmoud/boltons.git",
+  "base": "37ba6b2a3adde5795dee9195b255a4cb1d342a7b",
+  "reference": "6270b5e35ed902859df6188970eec5bee5ab73d1",
+  "source": "boltons/iterutils.py",
+  "function": "bucketize",
+  "task": "Fix bucketize for one-shot iterators with list keys. Preserve length validation and existing value_transform and key_filter behavior.",
+  "reference_bounds": ["    if not is_iterable(src):", "        src = zip(key, src)"],
+  "prefix_edits": [
+    ["        if len(key) != len(src):", "        key_len = len(key)\n        if key_len != len(src):"],
+    ["        if key_len != len(src):", "        src = iter(src) if not hasattr(src, \"__len__\") else src\n        if key_len != len(src):"]
+  ],
+  "mock_edits": {
+    "restart": ["        if key_len != len(src):", "        if hasattr(src, \"__len__\") and key_len != len(src):"]
+  },
+  "mock_reference_routes": ["rollback"]
+}

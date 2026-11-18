@@ -1,0 +1,15 @@
+{
+  "upstream": "https://github.com/python-attrs/attrs.git",
+  "base": "7c99a4953085186790a28dd441a93dc665f61269",
+  "reference": "f31bb2850a520993396ebdae598056fb3e3af6f8",
+  "source": "src/attr/_funcs.py",
+  "function": "resolve_types",
+  "task": "Fix attr.resolve_types so each subclass resolves its own string annotations even when a parent has already been resolved. Preserve caching for repeat calls on the same class.",
+  "prefix_edits": [
+    ["        cls.__attrs_types_resolved__\n", "        getattr(cls, \"__attrs_types_resolved__\")\n"],
+    ["        getattr(cls, \"__attrs_types_resolved__\")\n", "        bool(getattr(cls, \"__attrs_types_resolved__\"))\n"]
+  ],
+  "mock_edits": {
+    "restart": ["        bool(getattr(cls, \"__attrs_types_resolved__\"))\n    except AttributeError:\n", "        cls.__dict__[\"__attrs_types_resolved__\"]\n    except KeyError:\n"]
+  }
+}
